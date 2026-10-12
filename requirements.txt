@@ -1,0 +1,14 @@
+pandas>=1.5
+numpy>=1.23
+openpyxl>=3.0
+requests>=2.28
+
+# 聚宽取数（分红/权重/成分股价格/财务）
+jqdatasdk>=1.9
+
+# notebook（可选）
+jupyter>=1.0
+plotly>=5.14
+
+# 测试（可选）
+pytest>=7

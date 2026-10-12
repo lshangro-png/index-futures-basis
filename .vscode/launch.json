@@ -1,0 +1,25 @@
+{
+    // 运行和调试面板（⇧⌘D）里选一项按 F5。可以打断点单步调试 basis/ 里的代码。
+    // 聚宽账号放在项目根目录的 .env（已被 .gitignore 排除）：
+    //   JQ_ACCOUNT=你的账号
+    //   JQ_PASS=你的密码
+    "version": "0.2.0",
+    "configurations": [
+        {"name": "出报告 report", "type": "debugpy", "request": "launch", "module": "basis",
+         "args": ["report"], "cwd": "${workspaceFolder}", "console": "integratedTerminal"},
+        {"name": "预测分红落库 precompute", "type": "debugpy", "request": "launch", "module": "basis",
+         "args": ["precompute"], "cwd": "${workspaceFolder}", "console": "integratedTerminal"},
+        {"name": "分红回测 backtest", "type": "debugpy", "request": "launch", "module": "basis",
+         "args": ["backtest", "--product", "${input:product}"], "cwd": "${workspaceFolder}", "console": "integratedTerminal"},
+        {"name": "分红对账 reconcile", "type": "debugpy", "request": "launch", "module": "basis",
+         "args": ["reconcile", "--product", "${input:product}"], "cwd": "${workspaceFolder}", "console": "integratedTerminal"},
+        {"name": "聚宽增量更新 jq-backfill", "type": "debugpy", "request": "launch", "module": "basis",
+         "args": ["jq-backfill"], "cwd": "${workspaceFolder}", "envFile": "${workspaceFolder}/.env",
+         "console": "integratedTerminal"},
+        {"name": "数据水位 status", "type": "debugpy", "request": "launch", "module": "basis",
+         "args": ["status"], "cwd": "${workspaceFolder}", "console": "integratedTerminal"}
+    ],
+    "inputs": [
+        {"id": "product", "type": "pickString", "description": "品种", "options": ["300", "50", "500", "1000"], "default": "300"}
+    ]
+}

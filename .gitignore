@@ -1,0 +1,25 @@
+# 数据与产物（体积大 / 可重建）
+basis.db
+basis.db-*
+data/
+results/
+_backup/
+
+# 凭据缓存
+.ifind_token.json
+
+# 第三方研究报告（版权方禁止转载，只在 README 引用）
+*.pdf
+
+# 个人编辑器设置（launch.json 保留）
+.vscode/settings.json
+
+# 杂项
+__pycache__/
+.pytest_cache/
+.ipynb_checkpoints/
+.DS_Store
+~$*
+
+# 本地凭据
+.env

@@ -20,27 +20,17 @@ No strategy backtest is included — no position simulation, no P&L.
 ## Layout
 
 ```
-basis_analysis.ipynb     Interactive charts (only calls the basis package, no logic inside)
-run.sh                   One shot: build DB → JoinQuant → precompute forecasts → report
-basis/                   All code
-├── __main__.py          Unified CLI: python -m basis <command>
-├── config.py            Product table, contract slots, all tunable parameters ← tune here only
-├── db.py                SQLite schema, idempotent writes, query helpers
-├── importers.py         Build the DB from CSV/Excel files in data/
-├── calc.py              Option-chain pairing, put-call parity, ETF distribution detection, basis / annualization
-├── dividend.py          Dividend forecasting (Debon method): point forecast / backtest / daily precompute
-├── verify.py            Data checks: check / reconcile / diagnose
-├── report.py            Notebook charts, summary tables, HTML/CSV export
-└── sources/
-    └── jq.py            JoinQuant fetchers: dividend events, constituent prices, weights, financials
-data/                    Manually exported raw data (not committed)
-results/                 Generated reports
-basis.db                 SQLite database
+01_数据入库.ipynb    Data loading: market data from data/ + JoinQuant (dividends/weights/prices/financials) → basis.db; data checks
+02_分红预测.ipynb    Dividend forecasting: model, reconciliation, backtest → dividend_forecast_daily / dividend_backtest
+03_基差分析.ipynb    Basis analysis: option chains, put-call parity, basis → basis_daily; charts, HTML report, static figures
+data/                Manually exported raw data (not committed)
+results/             Generated HTML reports and static figures
+basis.db             SQLite database — the only channel between the three notebooks
 ```
 
-Dependencies flow one way: `config ← db ← importers / sources / dividend / calc ← report / verify ← __main__`.
-
-Every command has `-h`, e.g. `python -m basis backtest -h`. `--db` defaults to `basis.db` in the project root.
+Run the notebooks in order 01 → 02 → 03. The settings cell at the top of each holds all parameters and switches
+(`RUN_JQ`, `RUN_BACKTEST`, `RUN_PRECOMPUTE`, …) — tune there only. The last section of 02 and 03 holds
+synthetic-data checks of the conventions.
 
 ---
 
@@ -48,18 +38,13 @@ Every command has `-h`, e.g. `python -m basis backtest -h`. `--db` defaults to `
 
 ```bash
 pip install -r requirements.txt
-python -m basis init                                   # 1. data/ → basis.db
-export JQ_ACCOUNT='account'; export JQ_PASS='password'
-python -m basis jq-backfill                            # 2. JoinQuant dividend data (add --full the first time)
-python -m basis precompute                             # 3. Store dividend forecasts
-python -m basis report                                 # 4. HTML + CSV under results/
+jupyter lab
 ```
 
-Or simply `./run.sh`. For interactive charts, open `basis_analysis.ipynb` and run all cells.
-
-**VS Code**: `.vscode/launch.json` has the common commands preconfigured — pick one in Run and Debug and press F5;
-breakpoints work. Put the JoinQuant credentials in `.env` at the project root
-(`JQ_ACCOUNT=…` / `JQ_PASS=…`; it is git-ignored).
+1. `01_数据入库`: imports `data/`. To fetch from JoinQuant, put the credentials in `.env` at the project root
+   (`JQ_ACCOUNT=…` / `JQ_PASS=…`; it is git-ignored) and set `RUN_JQ = True` (`JQ_FULL` for the first full fetch).
+2. `02_分红预测`: on the first run, or after rules or data change, set `RUN_PRECOMPUTE = True` (about 40 minutes).
+3. `03_基差分析`: computes the basis into `basis_daily`, draws charts and exports the HTML report under `results/`.
 
 ### data/ layout
 
@@ -117,7 +102,7 @@ In the charts, the purple dotted line is the forecast version; all other dividen
 
 ## How dividends are forecast
 
-Replicates the method of Debon Securities' report (2024-07-12); code in `basis/dividend.py`.
+Replicates the method of Debon Securities' report (2024-07-12); code in `02_分红预测.ipynb`.
 
 **Core formula**
 
@@ -192,10 +177,7 @@ samples, mostly those starting in March 2025 / 2026; most improve (e.g. CSI 300,
 
 ### Reconciliation (no forecasting — validates the formula + weights)
 
-```bash
-python -m basis reconcile --product 300            # dividend point reconciliation
-python -m basis reconcile --product 300 --no-roll  # without weight roll-forward, for comparison
-```
+Section 6 of `02_分红预测`: `reconcile(conn, "300")`; `reconcile(conn, "300", roll=False)` without weight roll-forward, for comparison.
 
 | Index | Correlation | Median abs. error | Annual cumulative error |
 |---|---|---|---|
@@ -220,9 +202,7 @@ w_nt = w_n0 × (1 + r_n) / Σ w_i0 × (1 + r_i)
 
 ### Forecasting
 
-```bash
-python -m basis backtest --product 300
-```
+Section 5 of `02_分红预测` (`RUN_BACKTEST`); samples are written to the `dividend_backtest` table.
 
 CSI 300, one forecast date every two months × 30/60/90-day windows, 375 samples:
 
@@ -256,13 +236,13 @@ indices.
 
 Tuning:
 
-```bash
-python -m basis backtest --product 300 --sweep                  # scan 7 parameter sets
-python -m basis backtest --product 300 --lookback 2 --min-occ 1  # a single setting
+```python
+sweep(Panel(conn, "300"), load_dividend_point_index(conn, "300"))                    # scan 7 parameter sets
+backtest(Panel(conn, "300"), load_dividend_point_index(conn, "300"), Params(2, 1))  # a single setting
 ```
 
 Selection rule: first check that the 90-day mean error is close to 0, then pick the highest share within ±3 points.
-Then set `LOOKBACK_YEARS` / `MIN_OCCURRENCE` in `basis/config.py` and rerun `precompute`.
+Then set `LOOKBACK_YEARS` / `MIN_OCCURRENCE` in the parameter cell of `02_分红预测` and rerun the daily precompute.
 
 ### Pending plans (plan announced, ex-date not set)
 
@@ -277,7 +257,7 @@ primary key includes the ex-date). It is fully refreshed per product on every `j
   reporting period;
 - If the main table already has an event with a fixed ex-date for the same reporting period, the main table wins.
 
-Parameters are `PENDING_*` in `basis/config.py`. JoinQuant's `plan_progress` normally goes board plan →
+Parameters are `PENDING_*` at the top of `02_分红预测`. JoinQuant's `plan_progress` normally goes board plan →
 shareholder plan → implementation (all stored events are "implementation"). The exact wording for cancellations
 and "no distribution" has not been seen in real data yet; the first `jq-backfill` prints the progress distribution
 of pending plans so you can check. This table is a snapshot of the current state and only affects forecasts for the
@@ -297,9 +277,7 @@ last two years; earlier backtest results are unchanged.
 
 ## Database
 
-```bash
-python -m basis status
-```
+`status(conn)` in `01_数据入库` shows each table's coverage.
 
 | Table | Content | Source |
 |---|---|---|
@@ -314,10 +292,12 @@ python -m basis status
 | `constituent_daily` | Constituent prices (month-end + ex-date grid) | JoinQuant |
 | `index_weight` | **Monthly** constituent weights | JoinQuant |
 | `stock_financials` | Net profit attributable to parent, with `pub_date` | JoinQuant |
-| `dividend_forecast_daily` | Daily forecast dividend points per slot | `precompute` |
+| `dividend_forecast_daily` | Daily forecast dividend points per slot | 02 |
+| `dividend_backtest` | Dividend forecast backtest samples | 02 |
+| `basis_daily` | Daily basis, option-implied basis, annualized figures etc. for all four products | 03 |
 
 Deprecated tables in old databases (`etf_distribution` / `update_log`) and redundant indexes can be dropped and the
-file compacted with `python -m basis vacuum` (1.55 GB → 0.95 GB).
+file compacted with `vacuum(DB_PATH)` at the end of `01_数据入库` (1.55 GB → 0.95 GB).
 
 **Point-in-time discipline**: whether information is visible on day T is judged by `plan_date` for dividends,
 `impl_date` for ex-dates and `pub_date` for financials — never by `ex_date` or `report_date`.
@@ -331,11 +311,11 @@ amount from JoinQuant.
 
 ## Data checks
 
-```bash
-python -m basis check     --product 300                    # fields / weight frequency / share units
-python -m basis reconcile --product 300                    # dividend point reconciliation
-python -m basis diagnose  --product 50 --date 2018-06-07   # inspect one day
-python -m basis diagnose  --product 300 --worst 5          # scan the worst N days
+```python
+check(conn, "300")                        # 01: fields / weight frequency / share units
+reconcile(conn, "300")                    # 02: dividend point reconciliation
+diagnose(conn, "50", date="2018-06-07")   # 02: inspect one day
+diagnose(conn, "300", worst=5)            # 02: scan the worst N days
 ```
 
 `diagnose` reports "if caused by a single stock, how much its dividend per share would need to increase". If that
@@ -394,13 +374,9 @@ number is round (e.g. 1.20), most likely two dividends on the same day (regular 
 
 ---
 
-## Tests
+## Convention checks
 
-```bash
-python -m pytest tests
-```
-
-Synthetic-data tests (no `basis.db` needed) lock in the conventions: options matched to futures by expiry month,
+The last section of `02_分红预测` and `03_基差分析` uses synthetic data (no `basis.db` needed) to lock in the conventions: options matched to futures by expiry month,
 same-day ex-dividends excluded, announced first-time dividends counted, overdue extrapolated dates postponed, the
 10-day rule, consecutive-year extrapolation, net profit projection, and annual dividend net of interim.
 
@@ -410,14 +386,13 @@ same-day ex-dividends excluded, announced first-time dividends counted, overdue 
 
 **Plotly charts blank / won't open** — the chart library loads from a CDN; an internet connection is required.
 
-**No purple forecast line in the charts** — `python -m basis precompute` hasn't been run, or the notebook wasn't
-rerun afterwards.
+**No purple forecast line in the charts** — the daily precompute in `02_分红预测` (`RUN_PRECOMPUTE`) hasn't been run.
 
 **Mean / extremes of current-month annualized basis are astronomical** — near expiry only a few days remain, and
 `× 365 / DTE` blows up tiny bases. **For the current month, only look at the median.**
 
 **JoinQuant backfill is slow** — expected; tens of millions of rows for all four products. If interrupted, rerun
-the same command.
+the same cell.
 
 ---
 

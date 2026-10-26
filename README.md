@@ -17,27 +17,16 @@
 ## 文件构成
 
 ```
-basis_analysis.ipynb     交互看图入口（只调用 basis 包，不含计算逻辑）
-run.sh                   一键：建库 → 聚宽 → 预测落库 → 出报告
-basis/                   全部代码
-├── __main__.py          统一命令行：python -m basis <命令>
-├── config.py            品种表、合约位次、所有可调参数 ← 调参只改这里
-├── db.py                SQLite 表结构、幂等写入、查询接口
-├── importers.py         从 data/ 的 CSV/Excel 建库
-├── calc.py              期权链配对、PCP 反推、ETF 除息识别、基差/年化计算
-├── dividend.py          分红预测（德邦方法）：单点预测 / 回测 / 逐日预计算
-├── verify.py            数据体检：check / reconcile / diagnose
-├── report.py            notebook 交互图、统计表、HTML/CSV 导出
-└── sources/
-    └── jq.py            聚宽取数：分红事件、成分股价格、权重、财务
-data/                    手工导出的原始数据（不入库）
-results/                 生成的报告
-basis.db                 SQLite 数据库
+01_数据入库.ipynb    data/ 下的行情 + 聚宽（分红/权重/价格/财务）→ basis.db；数据体检
+02_分红预测.ipynb    分红预测模型、对账、回测 → dividend_forecast_daily / dividend_backtest
+03_基差分析.ipynb    期权链、PCP、基差与年化 → basis_daily；交互图、HTML 报告、静态图
+data/                手工导出的原始数据（不入库）
+results/             生成的 HTML 报告与静态图
+basis.db             SQLite 数据库，三个 notebook 之间只通过它传数据
 ```
 
-依赖方向是单向的：`config ← db ← importers / sources / dividend / calc ← report / verify ← __main__`。
-
-所有命令都有 `-h`，比如 `python -m basis backtest -h`。`--db` 默认是项目根目录的 `basis.db`。
+按 01 → 02 → 03 的顺序运行。每个 notebook 开头的设置单元里有全部参数和开关
+（`RUN_JQ`、`RUN_BACKTEST`、`RUN_PRECOMPUTE` 等），调参只改那里；末尾有用合成数据写的口径检查。
 
 ---
 
@@ -45,17 +34,13 @@ basis.db                 SQLite 数据库
 
 ```bash
 pip install -r requirements.txt
-python -m basis init                                   # 1. data/ → basis.db
-export JQ_ACCOUNT='账号'; export JQ_PASS='密码'
-python -m basis jq-backfill                            # 2. 聚宽分红数据（首次加 --full）
-python -m basis precompute                             # 3. 预测分红落库
-python -m basis report                                 # 4. 出 results/ 下的 HTML + CSV
+jupyter lab
 ```
 
-或者直接 `./run.sh`。要交互看图就打开 `basis_analysis.ipynb` 从头跑。
-
-**VS Code**：`.vscode/launch.json` 里配好了常用命令，运行和调试面板选一项按 F5，可以打断点。
-聚宽账号写进项目根目录的 `.env`（`JQ_ACCOUNT=…` / `JQ_PASS=…`，不会进 git）。
+1. `01_数据入库`：导入 `data/`；要取聚宽数据，把账号写进项目根目录的 `.env`
+   （`JQ_ACCOUNT=…` / `JQ_PASS=…`，不会进 git），再把 `RUN_JQ` 改成 `True`（首次全量再开 `JQ_FULL`）。
+2. `02_分红预测`：首次运行或规则、数据更新后，把 `RUN_PRECOMPUTE` 改成 `True`（约 40 分钟）。
+3. `03_基差分析`：计算基差写入 `basis_daily`，出图并导出 `results/` 下的 HTML 报告。
 
 ### data/ 文件约定
 
@@ -81,7 +66,7 @@ data/
 
 `jq-backfill` 默认增量：从库内最新除息日往回退 400 天重取，
 这样已入库但当时还没发实施公告的事件也会被更新。`--full` 从 2010 年重取全部
-（四品种约 1,200 万条，占 2 亿额度的 6%）。中途断了重跑同一条命令即可。
+（四品种约 1,200 万条，占 2 亿额度的 6%）。中途断了重跑同一个单元即可。
 
 ---
 
@@ -111,7 +96,7 @@ data/
 
 ## 分红预测怎么做的
 
-复现德邦证券《个股分红预测以及股指分红点位测算》(2024-07-12) 的方法，代码在 `basis/dividend.py`。
+复现德邦证券《个股分红预测以及股指分红点位测算》(2024-07-12) 的方法，代码在 `02_分红预测.ipynb`。
 
 **核心公式**
 
@@ -177,10 +162,7 @@ D_error = ((D₁ + D₃)/2 − D₂) / D₂  < 0.1  →  判定线性，外推
 
 ### 对账层（不含预测，验证「公式 + 权重」本身）
 
-```bash
-python -m basis reconcile --product 300            # 分红点数对账
-python -m basis reconcile --product 300 --no-roll  # 关掉权重外推做对照
-```
+`02_分红预测` 第六节：`reconcile(conn, "300")`；`reconcile(conn, "300", roll=False)` 关掉权重外推做对照。
 
 | 品种 | 相关性 | 绝对误差中位 | 年度累计误差 |
 |---|---|---|---|
@@ -204,9 +186,7 @@ w_nt = w_n0 × (1 + r_n) / Σ w_i0 × (1 + r_i)
 
 ### 预测层
 
-```bash
-python -m basis backtest --product 300
-```
+`02_分红预测` 第五节（`RUN_BACKTEST`），样本写入 `dividend_backtest` 表。
 
 沪深300，每两月一个时点 × 30/60/90 天窗口，375 个样本：
 
@@ -239,13 +219,13 @@ python -m basis backtest --product 300
 
 调参：
 
-```bash
-python -m basis backtest --product 300 --sweep                  # 扫 7 组参数
-python -m basis backtest --product 300 --lookback 2 --min-occ 1  # 单次指定
+```python
+sweep(Panel(conn, "300"), load_dividend_point_index(conn, "300"))          # 扫 7 组参数
+backtest(Panel(conn, "300"), load_dividend_point_index(conn, "300"), Params(2, 1))  # 单次指定
 ```
 
 挑选原则：先看 90 天误差均值是否贴近 0，再选 `≤3点占比` 最高的。
-定下来后改 `basis/config.py` 的 `LOOKBACK_YEARS` / `MIN_OCCURRENCE`，重跑 `precompute`。
+定下来后改 `02_分红预测` 开头参数单元里的 `LOOKBACK_YEARS` / `MIN_OCCURRENCE`，重跑 `precompute`。
 
 ### 在途预案（已出预案、未定除息日）
 
@@ -256,7 +236,7 @@ python -m basis backtest --product 300 --lookback 2 --min-occ 1  # 单次指定
 - 聚宽取消公告日（`bonus_cancel_pub_date`）早于当日的不采信，按日期生效、没有前视；进度含"停止/终止/否决"等字样的也不采信（兜底）；含"不分配"或每股分红为 0 的，该报告期不再预测；
 - 同一报告期主表里已有定了除息日的事件时，以主表为准。
 
-参数在 `basis/config.py` 的 `PENDING_*`。聚宽 `plan_progress` 正常流程是
+参数在 `02_分红预测` 开头的 `PENDING_*`。聚宽 `plan_progress` 正常流程是
 董事会预案 → 股东大会预案 → 实施方案（库里已入库事件全是"实施方案"）；取消类的具体写法、
 "不分配"如何表示还没见过真实数据，首次 `jq-backfill` 会打印在途预案的进度分布，对照着看一眼。这张表是「当前状态」快照，
 只影响最近两年的预测，更早的回测结果不变。
@@ -275,9 +255,7 @@ python -m basis backtest --product 300 --lookback 2 --min-occ 1  # 单次指定
 
 ## 数据库
 
-```bash
-python -m basis status
-```
+`01_数据入库` 里的 `status(conn)` 查看各表数据水位。
 
 | 表 | 内容 | 来源 |
 |---|---|---|
@@ -292,9 +270,11 @@ python -m basis status
 | `constituent_daily` | 成分股价格（月末 + 除息日网格） | 聚宽 |
 | `index_weight` | **月频**成分股权重 | 聚宽 |
 | `stock_financials` | 归母净利润，含 `pub_date` | 聚宽 |
-| `dividend_forecast_daily` | 每日各位次的预测分红点数 | `precompute` |
+| `dividend_forecast_daily` | 每日各位次的预测分红点数 | 02 |
+| `dividend_backtest` | 分红预测回测样本 | 02 |
+| `basis_daily` | 四品种逐日基差、期权隐含基差、年化等全部指标 | 03 |
 
-老库里的弃用表（`etf_distribution` / `update_log`）和冗余索引可以用 `python -m basis vacuum` 清掉并压缩（1.55 GB → 0.95 GB）。
+老库里的弃用表（`etf_distribution` / `update_log`）和冗余索引可以用 `01_数据入库` 末尾的 `vacuum(DB_PATH)` 清掉并压缩（1.55 GB → 0.95 GB）。
 
 **point-in-time 纪律**：判断信息在 T 日是否可见，分红看 `plan_date`、
 除息日看 `impl_date`、财报看 `pub_date`——不是看 `ex_date` 或 `report_date`。
@@ -307,11 +287,11 @@ python -m basis status
 
 ## 数据体检
 
-```bash
-python -m basis check     --product 300                    # 字段/权重频率/股本单位
-python -m basis reconcile --product 300                    # 分红点数对账
-python -m basis diagnose  --product 50 --date 2018-06-07   # 查某天
-python -m basis diagnose  --product 300 --worst 5          # 扫最差N天
+```python
+check(conn, "300")                        # 01：字段/权重频率/股本单位
+reconcile(conn, "300")                    # 02：分红点数对账
+diagnose(conn, "50", date="2018-06-07")   # 02：查某天
+diagnose(conn, "300", worst=5)            # 02：扫最差 N 天
 ```
 
 `diagnose` 会给出"若由单只股票造成，该股每股分红需再加多少"。如果补后是个
@@ -359,13 +339,9 @@ python -m basis diagnose  --product 300 --worst 5          # 扫最差N天
 
 ---
 
-## 测试
+## 口径检查
 
-```bash
-python -m pytest tests
-```
-
-用合成数据锁住几处口径（不依赖 `basis.db`）：期权按到期月对齐期货、当日除息不计入预测、
+`02_分红预测` 和 `03_基差分析` 的最后一节用合成数据锁住几处口径（不依赖 `basis.db`）：期权按到期月对齐期货、当日除息不计入预测、
 首次分红已出预案即计入、外推除息日已过时顺延、10 天规则、连续三年外推、净利润推算、年报扣除中报。
 
 ---
@@ -374,12 +350,12 @@ python -m pytest tests
 
 **Plotly 图打不开/空白** —— 图表库从 CDN 加载，需要联网。
 
-**图上没有紫色预测线** —— 没跑 `python -m basis precompute`，或跑了但 notebook 没重跑。
+**图上没有紫色预测线** —— 没在 `02_分红预测` 里跑过逐日预测落库（`RUN_PRECOMPUTE`），或跑了但 notebook 没重跑。
 
 **当月年化的均值/极值是天文数字** —— 临近到期 DTE 只剩几天，`×365/DTE` 会把
 微小基差放大。**看当月年化只能看中位数**。
 
-**聚宽 backfill 很慢** —— 正常，四品种全量千万级。断了重跑同一条命令即可。
+**聚宽 backfill 很慢** —— 正常，四品种全量千万级。断了重跑同一个单元即可。
 
 ---
 

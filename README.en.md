@@ -26,7 +26,7 @@ No strategy backtest is included — no position simulation, no P&L.
 04_分红误差与基差测量.ipynb  Research question: how dividend forecast errors affect basis measurement → div_error_panel / research_*
 data/                Manually exported raw data (not committed)
 results/             Generated HTML reports and static figures
-basis.db             SQLite database — the only channel between the three notebooks
+basis.db             SQLite database — the only channel between the four notebooks
 ```
 
 Run the notebooks in order 01 → 02 → 03 → 04. The settings cell at the top of each holds all parameters and switches

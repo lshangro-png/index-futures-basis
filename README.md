@@ -23,7 +23,7 @@
 04_分红误差与基差测量.ipynb  实证问题：分红预测误差如何影响基差测量 → div_error_panel / research_*
 data/                手工导出的原始数据（不入库）
 results/             生成的 HTML 报告与静态图
-basis.db             SQLite 数据库，三个 notebook 之间只通过它传数据
+basis.db             SQLite 数据库，四个 notebook 之间只通过它传数据
 ```
 
 按 01 → 02 → 03 → 04 的顺序运行。每个 notebook 开头的设置单元里有全部参数和开关

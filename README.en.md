@@ -23,12 +23,13 @@ No strategy backtest is included — no position simulation, no P&L.
 01_数据入库.ipynb    Data loading: market data from data/ + JoinQuant (dividends/weights/prices/financials) → basis.db; data checks
 02_分红预测.ipynb    Dividend forecasting: model, reconciliation, backtest → dividend_forecast_daily / dividend_backtest
 03_基差分析.ipynb    Basis analysis: option chains, put-call parity, basis → basis_daily; charts, HTML report, static figures
+04_分红误差与基差测量.ipynb  Research question: how dividend forecast errors affect basis measurement → div_error_panel / research_*
 data/                Manually exported raw data (not committed)
 results/             Generated HTML reports and static figures
 basis.db             SQLite database — the only channel between the three notebooks
 ```
 
-Run the notebooks in order 01 → 02 → 03. The settings cell at the top of each holds all parameters and switches
+Run the notebooks in order 01 → 02 → 03 → 04. The settings cell at the top of each holds all parameters and switches
 (`RUN_JQ`, `RUN_BACKTEST`, `RUN_PRECOMPUTE`, …) — tune there only. The last section of 02 and 03 holds
 synthetic-data checks of the conventions.
 
@@ -45,6 +46,7 @@ jupyter lab
    (`JQ_ACCOUNT=…` / `JQ_PASS=…`; it is git-ignored) and set `RUN_JQ = True` (`JQ_FULL` for the first full fetch).
 2. `02_分红预测`: on the first run, or after rules or data change, set `RUN_PRECOMPUTE = True` (about 40 minutes).
 3. `03_基差分析`: computes the basis into `basis_daily`, draws charts and exports the HTML report under `results/`.
+4. `04_分红误差与基差测量`: the empirical analysis on top of those tables (about 2 minutes).
 
 ### data/ layout
 
@@ -224,6 +226,43 @@ First version → current, per index (mean error / share within ±3 points):
 
 ---
 
+## Research question: how do dividend forecast errors affect basis measurement?
+
+On the same day and contract, **basis ex forecast dividends − basis ex realized dividends = forecast − realized dividends**,
+so the measurement error from adjusting the basis with forecast dividends is exactly the dividend forecast error.
+`04_分红误差与基差测量` studies it on SSE 50, CSI 300 and CSI 500 across four contract slots — 37,079 observations
+(2010-04 to 2026-07) — with Newey-West standard errors (lags = median remaining maturity of each slot).
+
+| Slot | Mean annualized error (pp) | \|Error\| median, dividend season | \|Error\| median, off-season | Sign flips, season | Material flips, season |
+|---|---|---|---|---|---|
+| Current month | +0.46 | 0.55 | 0.04 | 6.4% | 3.3% |
+| Next month | +0.10 | 0.31 | 0.08 | 4.7% | 1.3% |
+| Quarter 1 | +0.01 | 0.16 | 0.09 | 2.7% | 0.1% |
+| Quarter 2 | −0.07 | 0.10 | 0.16 | 1.6% | 0.0% |
+
+Dividend season = observation date in May–August. A sign flip means the two measures disagree on premium vs. discount;
+a material flip additionally requires the realized-dividend measure to be at least 1% annualized in absolute value.
+
+- **Near-month contracts systematically overstate the premium in dividend season**: the current-month error is
+  significantly positive for all three indices (CSI 300 +0.66, t = 5.2), about +2.6 pp on average in June.
+  The next month is also significant for CSI 300 and CSI 500; neither quarterly slot is.
+- **Quarterly contracts show no directional error**: observed in January–April their windows already cover the coming
+  dividend season, so errors appear earlier, are flatter, and are diluted by the longer maturity.
+- **Sign flips have increased since 2024** to about 4%–7% across maturities (mostly below 2.6% in 2015–2020),
+  consistent with the surge in interim dividends.
+- No trading strategy is involved, and no claim is made about arbitrage opportunities.
+
+**Sensitivity of the two residual look-aheads** (section 8 of `02`, sections 5–6 of `04`):
+
+- **Final implemented amounts**: on 96%–99% of dividend-season days part of the forecast relies on amounts announced but
+  not yet implemented — about 70% of forecast points. No history of revisions exists; a 1% revision moves the annualized
+  basis by at most 0.16 pp at the 95th percentile, 0.78 pp for a 5% revision.
+- **ETF distribution announcement date**: changing "5 trading days before ex-date" to 0, 3, 10 or 20 days moves the median
+  |ETF option − futures| deviation only between 12 and 16 points; the difference comes almost entirely from quarterly
+  contracts, and near-month results are insensitive to the assumption.
+
+---
+
 ## Known limitations
 
 ### Year-end / year-start windows still underestimate
@@ -293,6 +332,9 @@ last two years; earlier backtest results are unchanged.
 | `index_weight` | **Monthly** constituent weights | JoinQuant |
 | `stock_financials` | Net profit attributable to parent, with `pub_date` | JoinQuant |
 | `dividend_forecast_daily` | Daily forecast dividend points per slot | 02 |
+| `forecast_exposure` | Forecast points relying on final implemented amounts, on sampled days | 02 |
+| `etf_dist_detected` | Detected ETF distributions (ex-date, amount) | 03 |
+| `div_error_panel` / `research_*` | Dividend forecast error panel and research results | 04 |
 | `dividend_backtest` | Dividend forecast backtest samples | 02 |
 | `basis_daily` | Daily basis, option-implied basis, annualized figures etc. for all four products | 03 |
 
@@ -303,9 +345,9 @@ file compacted with `vacuum(DB_PATH)` at the end of `01_数据入库` (1.55 GB �
 `impl_date` for ex-dates and `pub_date` for financials — never by `ex_date` or `report_date`.
 
 **Known residual look-ahead**: `div_per_share` only stores the final (implemented) amount. When T falls between the
-plan and implementation, the final amount — not yet visible then — is used. Usually this is a small per-share
-adjustment from a share-count change with the total unchanged; a full fix would require storing each stage's
-amount from JoinQuant.
+plan and implementation, the final amount — not yet visible then — is used. See the research section above for its sensitivity:
+a 1% revision moves the annualized basis by at most 0.16 pp at the 95th percentile. A full fix would require storing
+each stage's amount from JoinQuant.
 
 ---
 
